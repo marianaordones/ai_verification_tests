@@ -9,7 +9,19 @@ storage_report() {
     done
     if command -v quota >/dev/null; then quota -s >&2 || true; fi
 }
-JOB_TMP=$(mktemp -d "$scratch/rt-pilot.XXXXXXXX") || { storage_report; exit 1; }
+JOB_TMP=
+for dest in "$scratch" /tmp; do
+    [[ -d "$dest" ]] || continue
+    candidate=$(mktemp -d "$dest/rt-pilot.XXXXXXXX") || continue
+    # CPython archives contain symlinks and the extracted binary must run here.
+    if cp /bin/true "$candidate/probe" &&
+        ln -s probe "$candidate/probe-link" && "$candidate/probe-link"; then
+        JOB_TMP=$candidate
+        break
+    fi
+    rm -rf -- "$candidate"
+done
+[[ -n "$JOB_TMP" ]] || { echo "Scratch indisponível para arquivos executáveis." >&2; storage_report; exit 1; }
 cleanup_runtime() {
     rc=$?
     if (( rc != 0 )); then storage_report; fi
@@ -29,7 +41,8 @@ try_python() {
 }
 find_python() {
     local name
-    for name in "$PWD/.venv/bin/python" python3.11 python3.10 python3 python; do
+    for name in "$PWD/.venv/bin/python" python3.11 python3.10 python3 python \
+        "$HOME"/pylibs/rt-managed-python/cpython-3.{10,11}*/bin/python3; do
         if try_python "$name"; then return 0; fi
     done
     return 1
@@ -44,7 +57,7 @@ elif ! find_python; then
     fi
     if type module >/dev/null 2>&1; then module load python/3.10.13 || true; fi
     if ! find_python; then
-        if [[ ${RT_ALLOW_UV:-0} != 1 ]]; then
+        if [[ ${RT_ALLOW_UV:-1} != 1 ]]; then
             echo "Sem CPython compatível. Indique CLUSTER_PYTHON ou autorize RT_ALLOW_UV=1." >&2
             exit 2
         fi
@@ -77,7 +90,9 @@ if ! check_runtime; then
         export PYTHONPATH="$wheel"
         "$PYTHON_BIN" -m pip --version
     fi
-    "$PYTHON_BIN" -m pip install --ignore-installed --target "$JOB_TMP/site" --find-links "$PWD/wheels" -r requirements.txt
+    wheel_args=()
+    if [[ -d "$PWD/wheels" ]]; then wheel_args=(--find-links "$PWD/wheels"); fi
+    "$PYTHON_BIN" -m pip install --only-binary=:all: --ignore-installed --target "$JOB_TMP/site" "${wheel_args[@]}" -r requirements.txt
     export PYTHONPATH="$JOB_TMP/site"
     check_runtime
 fi
