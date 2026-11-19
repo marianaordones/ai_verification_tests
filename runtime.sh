@@ -79,7 +79,9 @@ tag=$("$PYTHON_BIN" -c 'import sys; print(sys.implementation.cache_tag)')
 hash=$(sha256sum requirements.txt | cut -c1-16)
 previous="$HOME/pylibs/rt-marabou-$tag-$hash"
 if [[ -f "$previous/.complete" ]]; then export PYTHONPATH="$previous"; fi
-if ! check_runtime; then
+if ! check_runtime 2>"$JOB_TMP/dependency-check.log"; then
+    echo "Ambiente inicial incompleto. Instalando as dependências em $JOB_TMP/site."
+    tail -n 1 "$JOB_TMP/dependency-check.log"
     unset PYTHONPATH
     if ! "$PYTHON_BIN" -m pip --version; then
         wheel="$PWD/wheels/pip-25.0.1-py3-none-any.whl"
